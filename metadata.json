@@ -1,0 +1,5 @@
+{
+  "name": "Isfahan Stack",
+  "description": "A 3D tower stacking game with a Persian visual theme. Stack blocks precisely to build the highest tower possible.",
+  "requestFramePermissions": []
+}
