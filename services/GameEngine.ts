@@ -289,7 +289,7 @@ export class GameEngine {
     }
 
     if (overlap > 0) {
-      this.handleSuccessfulPlacement(overlap, delta, newWidth, newDepth, prevPos, prevWidth, prevDepth);
+      this.handleSuccessfulPlacement(delta, newWidth, newDepth, prevPos);
     } else {
       this.handleGameOver();
     }
@@ -326,13 +326,10 @@ export class GameEngine {
   }
 
   private handleSuccessfulPlacement(
-    overlap: number, 
     delta: number, 
     newWidth: number, 
     newDepth: number, 
-    prevPos: THREE.Vector3,
-    prevWidth: number, 
-    prevDepth: number
+    prevPos: THREE.Vector3
   ) {
     if (!this.currentBlock) return;
     
@@ -349,7 +346,6 @@ export class GameEngine {
     }
 
     if (delta !== 0) {
-        const debrisWidth = this.axis === 'x' ? (this.axis === 'x' ? (prevWidth + Math.abs(delta)) - newWidth : 0) : newWidth;
         const dWidth = this.axis === 'x' ? Math.abs(delta) : newWidth;
         const dDepth = this.axis === 'z' ? Math.abs(delta) : newDepth;
         
