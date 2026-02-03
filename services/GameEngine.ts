@@ -8,6 +8,7 @@ export class GameEngine {
   private renderer: THREE.WebGLRenderer;
   private container: HTMLElement;
   private soundManager: SoundManager;
+  private resizeObserver: ResizeObserver;
   
   private stack: THREE.Mesh[] = [];
   private debris: { mesh: THREE.Mesh, velocity: THREE.Vector3, rotVelocity: THREE.Vector3 }[] = [];
@@ -35,11 +36,11 @@ export class GameEngine {
     this.scene = new THREE.Scene();
     
     // 1. Lighting Upgrade
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
     this.scene.add(ambientLight);
     
     const dirLight = new THREE.DirectionalLight(0xffffff, 0.9);
-    dirLight.position.set(15, 30, 10);
+    dirLight.position.set(15, 30, 20);
     dirLight.castShadow = true;
     
     // Optimize shadow map
@@ -47,7 +48,7 @@ export class GameEngine {
     dirLight.shadow.mapSize.height = 2048;
     dirLight.shadow.camera.near = 0.5;
     dirLight.shadow.camera.far = 500;
-    const shadowSize = 20;
+    const shadowSize = 25;
     dirLight.shadow.camera.left = -shadowSize;
     dirLight.shadow.camera.right = shadowSize;
     dirLight.shadow.camera.top = shadowSize;
@@ -55,19 +56,13 @@ export class GameEngine {
     
     this.scene.add(dirLight);
 
-    // Camera Setup
-    const aspect = container.clientWidth / container.clientHeight;
-    const d = 10;
-    this.camera = new THREE.OrthographicCamera(
-      -d * aspect, d * aspect, d, -d, 1, 1000
-    );
-    
+    // Camera Setup - Initialize with dummy values, will be fixed by handleResize
+    this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 1000);
     this.camera.position.set(20, 20, 20);
     this.camera.lookAt(0, 0, 0);
 
     // Renderer Setup
     this.renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
-    this.renderer.setSize(container.clientWidth, container.clientHeight);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.setClearColor(0x000000, 0); 
     
@@ -77,13 +72,29 @@ export class GameEngine {
     
     container.appendChild(this.renderer.domElement);
 
-    window.addEventListener('resize', this.handleResize);
+    // Robust Resizing
+    this.handleResize = this.handleResize.bind(this);
+    this.resizeObserver = new ResizeObserver(() => this.handleResize());
+    this.resizeObserver.observe(container);
+    
+    // Initial Resize
     this.handleResize();
+    
+    // Start idle animation loop immediately to render scene (even if empty or just base)
+    this.animate();
+
+    // Show a base block immediately so the screen isn't empty
+    this.spawnBaseBlock();
   }
 
-  private handleResize = () => {
+  private handleResize() {
     if (!this.container) return;
-    const aspect = this.container.clientWidth / this.container.clientHeight;
+    const width = this.container.clientWidth;
+    const height = this.container.clientHeight;
+
+    if (width === 0 || height === 0) return;
+
+    const aspect = width / height;
     const d = aspect < 1 ? 12 : 9; 
     
     this.camera.left = -d * aspect;
@@ -91,8 +102,8 @@ export class GameEngine {
     this.camera.top = d;
     this.camera.bottom = -d;
     this.camera.updateProjectionMatrix();
-    this.renderer.setSize(this.container.clientWidth, this.container.clientHeight);
-  };
+    this.renderer.setSize(width, height);
+  }
 
   private getLayerColor(layer: number): THREE.Color {
     const cycleLength = 20;
@@ -109,6 +120,31 @@ export class GameEngine {
     return new THREE.Color(`rgb(${Math.round(r)}, ${Math.round(g)}, ${Math.round(b)})`);
   }
 
+  private spawnBaseBlock() {
+    // Clear existing
+    this.cleanup();
+    
+    const geometry = new THREE.BoxGeometry(
+      GAME_CONFIG.defaultBlockSize, 
+      GAME_CONFIG.blockHeight, 
+      GAME_CONFIG.defaultBlockSize
+    );
+    const material = new THREE.MeshStandardMaterial({ 
+      color: this.getLayerColor(0),
+      roughness: 0.3,
+      metalness: 0.1
+    });
+    const baseBlock = new THREE.Mesh(geometry, material);
+    baseBlock.position.set(0, 0, 0);
+    baseBlock.receiveShadow = true;
+    this.scene.add(baseBlock);
+    this.stack.push(baseBlock);
+    
+    // Reset camera
+    this.camera.position.set(20, 20, 20);
+    this.camera.lookAt(0, 0, 0);
+  }
+
   public startGame() {
     this.cleanup();
     this.soundManager.resume();
@@ -119,36 +155,15 @@ export class GameEngine {
     this.comboCounter = 0;
     this.onScoreUpdate(0, 1);
 
-    this.camera.position.set(20, 20, 20);
-    this.camera.lookAt(0, 0, 0);
-
-    const geometry = new THREE.BoxGeometry(
-      GAME_CONFIG.defaultBlockSize, 
-      GAME_CONFIG.blockHeight, 
-      GAME_CONFIG.defaultBlockSize
-    );
-    // 2. Material Upgrade to Standard for shadows
-    const material = new THREE.MeshStandardMaterial({ 
-      color: this.getLayerColor(0),
-      roughness: 0.3,
-      metalness: 0.1
-    });
-    const baseBlock = new THREE.Mesh(geometry, material);
-    baseBlock.position.set(0, 0, 0);
-    baseBlock.receiveShadow = true; // Base receives shadows
-    this.scene.add(baseBlock);
-    this.stack.push(baseBlock);
-
+    this.spawnBaseBlock(); // Re-add base block
     this.spawnNextBlock();
-    this.animate();
   }
 
   // Revive Mechanic: Undo the Game Over state
   public reviveGame() {
-    if (this.isGameRunning) return; // Already running
+    if (this.isGameRunning) return; 
 
-    // 1. Remove the "Game Over" debris (the block that fell)
-    // We assume the last added debris is the one that killed the player
+    // 1. Remove the "Game Over" debris
     if (this.debris.length > 0) {
       const lastDebris = this.debris.pop();
       if (lastDebris) {
@@ -159,19 +174,13 @@ export class GameEngine {
 
     // 2. Reset State
     this.isGameRunning = true;
-    this.currentBlock = null; // Clear reference to the fallen block
+    this.currentBlock = null; 
     
-    // 3. Reset Music/Sound if needed (Optional)
+    // 3. Reset Music/Sound
     this.soundManager.resume();
 
-    // 4. Spawn a fresh block on top of the stack
+    // 4. Spawn a fresh block on top
     this.spawnNextBlock();
-
-    // 5. Check if animation loop is running, if not start it. 
-    // This fixes the bug where multiple animation loops were running causing double speed.
-    if (!this.animationId) {
-      this.animate();
-    }
   }
 
   private spawnNextBlock() {
@@ -264,7 +273,7 @@ export class GameEngine {
       this.comboCounter++;
       this.spawnPerfectParticles(current.position, currentWidth, currentDepth);
       this.soundManager.playPerfect(this.comboCounter);
-      this.triggerHaptic('light'); // Light vibration on perfect
+      this.triggerHaptic('light'); 
       
       newWidth = currentWidth;
       newDepth = currentDepth;
@@ -275,7 +284,7 @@ export class GameEngine {
     } else {
       this.comboCounter = 0; 
       this.soundManager.playPlace();
-      this.triggerHaptic('light'); // Light vibration on place
+      this.triggerHaptic('light'); 
       
       if (this.axis === 'x') {
         overlap = prevWidth - Math.abs(delta);
@@ -422,6 +431,9 @@ export class GameEngine {
   private animate = () => {
     if (!this.container) return; 
 
+    // Always render the scene, even if game is not running (e.g. Menu with just base block)
+    this.renderer.render(this.scene, this.camera);
+    
     if (this.isGameRunning && this.currentBlock) {
       const speed = GAME_CONFIG.moveSpeed + (this.score * 0.005); 
       const actualSpeed = Math.min(speed, 0.4); 
@@ -439,6 +451,7 @@ export class GameEngine {
       }
     }
 
+    // Always animate debris and particles
     for (let i = this.debris.length - 1; i >= 0; i--) {
       const d = this.debris[i];
       d.mesh.position.add(d.velocity);
@@ -471,20 +484,23 @@ export class GameEngine {
       }
     }
 
-    if (this.stack.length > 1) {
+    // Always smooth camera
+    if (this.stack.length > 0) {
       const currentTopY = (this.stack.length) * GAME_CONFIG.blockHeight;
-      const camTargetY = 20 + currentTopY;
+      // If game is running, focus on top. If menu, just look at base.
+      const targetY = this.isGameRunning ? currentTopY : GAME_CONFIG.blockHeight;
+      const camTargetY = 20 + targetY;
+      
       this.camera.position.y += (camTargetY - this.camera.position.y) * 0.05;
-      this.camera.lookAt(0, currentTopY, 0);
+      this.camera.lookAt(0, targetY, 0);
     }
 
-    this.renderer.render(this.scene, this.camera);
     this.animationId = requestAnimationFrame(this.animate);
   }
 
   private cleanup() {
-    if (this.animationId) cancelAnimationFrame(this.animationId);
-    this.animationId = null; // Important: Clear the ID
+    // Note: We do NOT cancel animation frame here anymore because we want the loop to persist across restarts
+    // We only clear the meshes
     
     [...this.stack, ...this.debris.map(d => d.mesh), ...this.particles.map(p => p.mesh), this.currentBlock].forEach(mesh => {
       if (mesh) {
@@ -500,8 +516,9 @@ export class GameEngine {
   }
 
   public dispose() {
+    if (this.animationId) cancelAnimationFrame(this.animationId);
+    this.resizeObserver.disconnect();
     this.cleanup();
-    window.removeEventListener('resize', this.handleResize);
     this.renderer.dispose();
     if (this.container.contains(this.renderer.domElement)) {
       this.container.removeChild(this.renderer.domElement);
